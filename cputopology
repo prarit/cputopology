@@ -1,0 +1,266 @@
+#!/bin/bash
+
+DEBUG=
+CMDLINEFILE=/proc/cmdline
+TOPOLOGY=
+MAXCPUS=0
+MAXSOCKETS=0
+MAXCORES=0
+MAXTHREADS=0
+RESTORE=
+
+usage () {
+	echo "usage: cputopology --topology [ sparse | dense ] "
+	echo "                   --maxcpus [ maximum number of cpus ] "
+	echo "                   --maxsockets [ maximum number of sockets ] "
+	echo "                   --maxcores [ maximum number of cores/socket ] "
+	echo "                   --maxthreads [ maximum number of threads/core ] "
+	echo "                   --kernel (get values from kernel command line)"
+	echo "			      cputopology.topology=[ sparse | dense ]"
+	echo "			      cputopology.maxcpus=[ maximum number of cpus ]"
+	echo "			      cputopology.maxsockets=[ maximum number of sockets ]"
+	echo "			      cputopology.maxcores=[ maximum number of cores/socket ]"
+	echo "			      cputopology.maxthreads=[ maximum number of threads/core ]"
+	echo "                   --restore (enable all cpus) "
+	echo "                   --help (this message) "
+	echo " "
+	echo "The cputopology utility enables/disables cpus according to the input parameters"
+	echo "specified by a user.  The --topology option must be used to define a sparse or"
+	echo "dense topology.  A sparse topology is one where cpus are spread out evenly on"
+	echo "each socket, and a dense topology enumerates all the cpus on socket 0,"
+	echo "socket 1, and so on."
+	echo " "
+	echo "The cpu enumeration on many systems takes into account IRQ enumeration,"
+	echo "I/O & memory ordering, and thermal issues.  This utility overrides those"
+	echo "settings"
+	echo " "
+	echo "ie.) USE AT YOUR OWN RISK."
+}
+
+# optargs is nice but it only allows character use and not strings ...
+while [[ $# -gt 0 ]]
+do
+	key="$1"
+	case $key in
+		--topology)
+			[ "$2" == "sparse" ] && TOPOLOGY="SPARSE"
+			[ "$2" == "dense" ] && TOPOLOGY="DENSE"
+			shift;;
+		--maxcpus)
+			MAXCPUS="$2"
+			shift;;
+		--maxsockets)
+			MAXSOCKETS="$2"
+			shift;;
+		--maxcores)
+			MAXCORES="$2"
+			shift;;
+		--maxthreads)
+			MAXTHREADS="$2"
+			shift;;
+		--help)
+			usage
+			exit 0
+			;;
+		--restore)
+			RESTORE=1;
+			;;
+		--kernel)
+			KERNEL=1;
+			;;
+		--debug) # undocumented on purpose :)
+			DEBUG=1;
+			;;
+		--debugcmdline) # undocumented on purpose :)
+			CMDLINEFILE="$2"
+			shift
+			;;
+		*)
+			echo "Error: Unknown option $key"
+			usage
+			exit 1
+			;;
+	esac
+	shift
+done
+
+if [ $KERNEL ]; then
+	for parameter in $(cat $CMDLINEFILE)
+	do
+	echo $parameter | grep cputopology >& /dev/null
+	if [ $? -eq 0 ]; then
+		_par=${parameter##cputopology.}
+		key=$(echo $_par | awk -F "=" ' { print $1 } ')
+		arg=$(echo $_par | awk -F "=" ' { print $2 } ')
+		[ $DEBUG ] && echo "kernel parameter: $_par evaluated as $key $arg"
+		case $key in
+		topology) # read cputopology.topology for configuration
+			arg=$(echo $arg | tr [a-z] [A-Z])
+			TOPOLOGY=$arg
+			;;
+		maxcpus) # read cputopology.maxcpus for MAXCPUS
+			MAXCPUS=$arg
+			;;
+		maxsockets) # read cputopology.maxsockets for MAXSOCKETS
+			MAXSOCKETS=$arg
+			;;
+		maxcores) # read cputopology.maxcores for MAXCORES
+			MAXCORES=$arg
+			;;
+		maxthreads) # read cputopology.maxthreads for MAXTHREADS
+			MAXTHREADS=$arg
+			;;
+		*)
+			echo "Error: unknown option $key"
+			usage
+			exit 1
+			;;
+		esac
+	fi
+	done
+fi
+
+if [ ! "$RESTORE" ] && [ ! "$TOPOLOGY" ] && [ ! "$DEBUG" ]; then
+	echo "Error: Either --restore or --topology must be set."
+	usage
+	exit 1;
+fi
+
+[ $RESTORE ] && echo "Restoring all cpus."
+
+MAXVALCPUS=$(lscpu | grep "^CPU(s)" | awk -F ":" ' { print $2 } '  | tr -d " ")
+
+# online everything
+for cpu in `seq 0 $MAXVALCPUS`
+do
+	[ -e /sys/devices/system/cpu/cpu${cpu}/online ] && echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+done
+
+[ $RESTORE ] && exit
+
+# find the real max cpus, sockets, cores, and threads (HT may be disabled!)
+MAXVALSOCKETS=$(lscpu | grep "Socket(s)" | awk -F ":" ' { print $2 } ' | tr -d " ")
+MAXVALTHREADS=$(lscpu | grep "Thread(s) per core" | awk -F ":" ' { print $2 } ' | tr -d " ")
+MAXVALCPS=$(lscpu | grep "Core(s) per socket" | awk -F ":" ' { print $2 } ' | tr -d " ")
+
+# These checks also mean that the MAX* values CANNOT be zero
+[ $MAXCPUS -eq 0 ] && MAXCPUS=$MAXVALCPUS
+[ $MAXSOCKETS -eq 0 ] && MAXSOCKETS=$MAXVALSOCKETS
+[ $MAXCORES -eq 0 ] && MAXCORES=$MAXVALCPS
+[ $MAXTHREADS -eq 0 ] && MAXTHREADS=$MAXVALTHREADS
+
+echo "The hardware configuration is:"
+echo "Max CPUS    - $MAXVALCPUS"
+echo "Max SOCKETS - $MAXVALSOCKETS"
+echo "Max CORES   - $MAXVALCPS"
+echo "Max THREADS - $MAXVALTHREADS"
+echo " "
+echo "Configuring system with TOPOLOGY $TOPOLOGY"
+echo "Maximum CPUS    - $MAXCPUS"
+echo "Maximum SOCKETS - $MAXSOCKETS"
+echo "Maximum CORES   - $MAXCORES"
+echo "Maximum THREADS - $MAXTHREADS"
+echo " "
+echo "Calculated topology:"
+calculated_max_cpus=$(expr $MAXSOCKETS \* $MAXCORES \* $MAXTHREADS)
+[ $MAXCPUS -lt $calculated_max_cpus ] && calculated_max_cpus=$MAXCPUS
+echo "Maximum CPUS - $calculated_max_cpus"
+
+# how many cpus are there per socket?
+cpuspersocket=$(expr $MAXCORES \* $MAXTHREADS)
+
+enable_threads_on_node () {
+	[ $DEBUG ] && echo "enabled $2 cpus on node $1"
+	maxcount=$2
+	NODEPATH=/sys/devices/system/node/node$1
+	[ ! -e $NODEPATH ] && return
+
+	count=0
+	core=0
+	for cpu in `seq 0 $MAXVALCPUS`
+	do
+		# if this cpu is in enable_cpus then continue to next cpu
+		[[ " ${enable_cpus[@]} " =~ " ${cpu} " ]] && continue
+
+		CPUPATH=$NODEPATH/cpu${cpu}
+		[ ! -e $CPUPATH ] && continue
+
+		# if this cpu's sibling is online and smt disabled
+		# then continue to next cpu
+		if [ -e $CPUPATH/topology/thread_siblings_list ]; then
+			sib=$(cat $CPUPATH/topology/thread_siblings_list | tr , "\n" | grep -vw $cpu)
+			[ $MAXTHREADS -eq 1 ] && [[ " ${enable_cpus[@]} " =~ " ${sib} " ]] && continue
+		fi
+
+		[ $count -ge $maxcount ] && continue
+		[ $core -ge $MAXCORES ] && continue
+		enable_cpus+=( "$cpu" )
+		((count++))
+		((core++))
+		[ $DEBUG ] && echo "node = $1 cpu = $cpu sib = $sib count = $count core = $core"
+		if [ -e $CPUPATH/topology/thread_siblings_list ]; then
+			[ $count -ge $maxcount ] && continue
+			[ $MAXTHREADS -eq 1 ] && continue
+			enable_cpus+=( "$sib" )
+			((count++))
+		fi
+	done
+
+}
+
+dense () {
+	for node in `seq 0 $MAXSOCKETS`
+	do
+		if [ $remainingcpus -ge $cpuspersocket ]; then
+			enable_threads_on_node $node $cpuspersocket
+		else
+			enable_threads_on_node $node $remainingcpus
+		fi
+		remainingcpus=$(expr $remainingcpus - $cpuspersocket)
+	done
+}
+
+sparse () {
+	while [ $remainingcpus -ge 0 ];
+	do
+		for node in `seq 0 $MAXSOCKETS`
+		do
+			[ $remainingcpus -gt 1 ] && enable_threads_on_node $node 2
+			[ $remainingcpus -eq 1 ] && enable_threads_on_node $node 1
+			remainingcpus=$(expr $remainingcpus - 2)
+		done
+	done
+}
+
+((MAXSOCKETS--))
+remainingcpus=$calculated_max_cpus
+
+[ $DEBUG ] && [ ! "$TOPOLOGY" ] && echo "Error: Must specify --topology with --debug." && exit 1
+
+topology_valid=
+[ $TOPOLOGY == "SPARSE" ] && topology_valid=1 && sparse
+[ $TOPOLOGY == "DENSE" ] && topology_valid=1 && dense
+[ ! $topology_valid ] && echo "Error: Topology value $TOPOLOGY invalid." && exit 1
+
+if [ $DEBUG ]; then
+	count=0
+	for cpu in ${enable_cpus[@]}; do
+		((count++))
+		echo $count $cpu
+	done
+fi
+
+[ ${#enable_cpus[@]} -eq 0 ] && echo "Error: Resulting topology results in no online cpus." && exit 1
+
+[ $DEBUG ] && exit
+
+for cpu in `seq 0 $MAXVALCPUS`
+do
+	[ ! -e /sys/devices/system/cpu/cpu${cpu} ] && continue
+
+	if [[ " ${enable_cpus[@]} " =~ " ${cpu} " ]]; then
+		echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+	else
+		echo 0 > /sys/devices/system/cpu/cpu${cpu}/online
+	fi
+done

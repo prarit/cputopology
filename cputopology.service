@@ -1,0 +1,12 @@
+[Unit]
+Description=CPU topology configuration
+After=basic.target
+ConditionVirtualization=false
+ConditionPathExists=/proc/cmdline
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/bin/bash /usr/sbin/cputopology --kernel
+[Install]
+WantedBy=basic.target
