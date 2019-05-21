@@ -1,0 +1,26 @@
+For modern systems (ie, those using systemd) users can configure cputopology
+by:
+
+cp cputopology /usr/sbin
+cp cputopology.service /etc/systemd/system/
+systemctl enable cputopology.service
+
+which will run cputopology at boot time.
+
+For older systems (ex, RHEL6 & initscripts), users can configure cputopology
+by doing someting like
+
+--- /etc/rc.sysinit.orig        2019-05-21 09:41:04.926179204 -0400
++++ /etc/rc.sysinit     2019-05-21 09:35:24.942852433 -0400
+@@ -557,6 +557,10 @@ if [ -f /etc/crypttab ]; then
+     init_crypto 1
+ fi
+
++# run CPU topology script
++[ -e /usr/sbin/cputopology ] && [ -x /usr/sbin/cputopology ] && /usr/sbin/cputopology --kernel
++
++# Configure machine if necessary.
+ if [ -f /.unconfigured ]; then
+
+     if [ -x /bin/plymouth ]; then
+
