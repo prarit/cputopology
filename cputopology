@@ -37,6 +37,19 @@ usage () {
 	echo "ie.) USE AT YOUR OWN RISK."
 }
 
+cpustatus () {
+	# arg 1 is cpu number (0,1,2,...)
+	# arg 2 is 0 (offline) or 1 (online)
+
+	if [ -e /sys/devices/system/cpu/cpu$1/online ]; then
+		if [ ! "$DEBUG" ]; then
+			( echo $2 > /sys/devices/system/cpu/cpu$1/online ) >& /dev/null
+		else
+			echo $2 > /sys/devices/system/cpu/cpu$1/online
+		fi
+	fi
+}
+
 # optargs is nice but it only allows character use and not strings ...
 while [[ $# -gt 0 ]]
 do
@@ -133,13 +146,7 @@ MAXVALCPUS=$(lscpu | grep "^CPU(s)" | awk -F ":" ' { print $2 } '  | tr -d " ")
 # online everything
 for cpu in `seq 0 $MAXVALCPUS`
 do
-	if [ -e /sys/devices/system/cpu/cpu${cpu}/online ]; then
-		if [ ! "$DEBUG" ]; then
-			( echo 1 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
-		else
-			echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
-		fi
-	fi
+	cpustatus $cpu 1
 done
 
 [ $RESTORE ] && exit
@@ -262,19 +269,9 @@ fi
 
 for cpu in `seq 0 $MAXVALCPUS`
 do
-	[ ! -e /sys/devices/system/cpu/cpu${cpu}/online ] && continue
-
 	if [[ " ${enable_cpus[@]} " =~ " ${cpu} " ]]; then
-		if [ ! "$DEBUG" ]; then
-			( echo 1 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
-		else
-			echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
-		fi
+		cpustatus $cpu 1
 	else
-		if [ ! "$DEBUG" ]; then
-			( echo 0 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
-		else
-			echo 0 > /sys/devices/system/cpu/cpu${cpu}/online
-		fi
+		cpustatus $cpu 0
 	fi
 done
