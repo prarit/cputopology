@@ -133,7 +133,13 @@ MAXVALCPUS=$(lscpu | grep "^CPU(s)" | awk -F ":" ' { print $2 } '  | tr -d " ")
 # online everything
 for cpu in `seq 0 $MAXVALCPUS`
 do
-	[ -e /sys/devices/system/cpu/cpu${cpu}/online ] && echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+	if [ -e /sys/devices/system/cpu/cpu${cpu}/online ]; then
+		if [ ! "$DEBUG" ]; then
+			( echo 1 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
+		else
+			echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+		fi
+	fi
 done
 
 [ $RESTORE ] && exit
@@ -256,11 +262,19 @@ fi
 
 for cpu in `seq 0 $MAXVALCPUS`
 do
-	[ ! -e /sys/devices/system/cpu/cpu${cpu} ] && continue
+	[ ! -e /sys/devices/system/cpu/cpu${cpu}/online ] && continue
 
 	if [[ " ${enable_cpus[@]} " =~ " ${cpu} " ]]; then
-		echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+		if [ ! "$DEBUG" ]; then
+			( echo 1 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
+		else
+			echo 1 > /sys/devices/system/cpu/cpu${cpu}/online
+		fi
 	else
-		echo 0 > /sys/devices/system/cpu/cpu${cpu}/online
+		if [ ! "$DEBUG" ]; then
+			( echo 0 > /sys/devices/system/cpu/cpu${cpu}/online ) >& /dev/null
+		else
+			echo 0 > /sys/devices/system/cpu/cpu${cpu}/online
+		fi
 	fi
 done
